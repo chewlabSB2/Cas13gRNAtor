@@ -22,30 +22,37 @@ def get_args():
 		prog = 'cas13gRNAtor',
 		description = DESCRIPTION
 	)
-	parser.add_argument('-r', '--reference', dest = 'reference', metavar="fasta", help="Reference for Guide Score Calculation")
-	parser.add_argument('--guide-score', dest = 'scorefile', metavar="csv", help="Guide Score From RfxCas13d_GuideScoring.R")
-
-	parser.add_argument('-m','--MSA', dest = "MSA", metavar="fasta", help="Sequences to align")
-	parser.add_argument('-bc', '--bowtie-conservation', dest = "bowtie", help="Path to fasta file for Bowtie conservation calculation")
-	parser.add_argument('-bo', '--bowtie-offtarget', dest = "offtarget", help="Path to fasta file for Bowtie conservation calculation")
-
-	parser.add_argument('--mismatch', default=2, type=int,  choices=[0,1,2,3,4,5,6,7,8,9,10],
-						help='Number of mismatches allowed for Bowtie (Default: %(default)s)')
-
-	parser.add_argument('-t', '--threads', default=4, type=int, dest = 'CPU', help="Number of Core to use (Default: %(default)s)")
-	parser.add_argument('-p', '--prefix', default = 'RfxCas13d_gRNA' , help='file name prefix to your file names (Default: %(default)s)')
-	#parser.add_argument('-o', '--output',  default = '.', help='Default: Save files to current Directory')
+	parser.add_argument('-r', '--reference', dest = 'reference', metavar="fasta", 
+						help="Reference for Guide Score Calculation")
+	parser.add_argument('-m','--MSA', dest = "MSA", metavar="fasta", 
+						help="Sequences to align")
+	parser.add_argument('-bc', '--bowtie-conservation', dest = "bowtie", 
+						help="Path to fasta file for Bowtie conservation calculation")
+	parser.add_argument('-bo', '--bowtie-offtarget', dest = "offtarget", 
+						help="Path to fasta file for Bowtie offtarget  Filtering")
+	parser.add_argument('-t', '--threads', default=4, type=int, dest = 'CPU', 
+						help="Number of Core to use (Default: %(default)s)")
+	parser.add_argument('-p', '--prefix', default = 'RfxCas13d_gRNA', 
+						help='file name prefix to your file names (Default: %(default)s)')	
 	parser.add_argument('-d', '--debug',
 						help='Print lots of debugging statements',
 						action="store_const",dest="loglevel",const=logging.DEBUG,
 						default=logging.INFO)
-	'''
-	parser.add_argument('--conservation-index', dest="conservation_index", default=None, help='Input an index for conservation calculation if you have!')
-	parser.add_argument('--offtarget-index', dest="offtarget_index", default=None, help='Input an index for offtargets if you have!')
-	'''
-	parser.add_argument('--keep-homopolymer', action="store_false", dest="homopolymer", help='Keep gRNAs with homopolymer UUUU (Default: False)')
-	parser.add_argument('--keep-tmp', action="store_false", dest='temp', help='Keep Temporary files (Default: Does not Keep)')
-	parser.add_argument('--no-plot', action="store_false",dest="plot", help='Does not Plot graph')
+
+	parser.add_argument('--mismatch', default=5, type=int,  choices=range(0,10),
+						help='Number of mismatches allowed for Bowtie (Default: %(default)s)')
+	parser.add_argument('--guide-score', dest = 'scorefile', metavar="csv", 
+						help="Guide Score From RfxCas13d_GuideScoring.R")
+	parser.add_argument('--conservation-index', dest="conservation_index", default=None, 
+						help='Input an index for conservation calculation if you have!')
+	parser.add_argument('--offtarget-index', dest="offtarget_index", default=None, 
+						help='Input an index for offtargets if you have!')	
+	parser.add_argument('--keep-homopolymer', action="store_false", dest="homopolymer", 
+						help='Keep gRNAs with homopolymer UUUU (Default: False)')
+	parser.add_argument('--keep-tmp', action="store_false", dest='temp', 
+						help='Keep Temporary files (Default: Does not Keep)')
+	parser.add_argument('--no-plot', action="store_false",dest="plot", 
+						help='Does not Plot graph')
 
 	args = parser.parse_args()
 	if not args.reference:
@@ -54,8 +61,8 @@ def get_args():
 		assert args.reference, ASSERT_MESSAGE_SCORE
 
 	if not args.MSA:
-		assert args.bowtie, ASSERT_MESSAGE_ALIGNMENT
-	elif not args.bowtie:
+		assert args.bowtie or args.conservation_index, ASSERT_MESSAGE_ALIGNMENT
+	elif not args.bowtie or not args.conservation_index:
 		assert args.MSA, ASSERT_MESSAGE_ALIGNMENT
 			
 	return args
@@ -94,33 +101,38 @@ def bowtie_main(args, crRNA_fasta, fasta_dict = {}, mode = 'offtarget'):
 		return {}, []
 
 	temp_files_to_remove = []
+	bowtie_index_prefix = None
 	bowtie_path, bowtie_build_path = check_bowtie(args)
+	
 	if mode == 'offtarget':
 		_prefix = args.prefix  + '_offtarget' 
 		bowtie_reference = args.offtarget
 		samfile = args.prefix + '_offtarget.sam'
+		bowtie_index_prefix = args.offtarget_index if args.offtarget_index else None
 	elif mode == 'conservation':
 		_prefix = args.prefix + '_conservation'
 		bowtie_reference = args.bowtie
 		samfile = args.prefix + '_conservation.sam'
+		bowtie_index_prefix = args.conservation_index if args.conservation_index else None
 
-	logger.info(f"Building Bowtie Index for {mode}! This might take a while")
-	bowtie_build_cmdline, bowtie_index_prefix = bowtie_build_cmd(bowtie_reference, _prefix, bowtie_build_path, args.CPU)
-	success_bowtie_build = run_shell_command(bowtie_build_cmdline)
-	if not success_bowtie_build:
-		raise AlignmentError("Error during bowtie-build")
+	if not bowtie_index_prefix:
+		logger.info(f"Building Bowtie Index for {mode}! This might take a while")
+		bowtie_build_cmdline, bowtie_index_prefix = bowtie_build_cmd(bowtie_reference, _prefix, bowtie_build_path, args.CPU)
+		success_bowtie_build = run_shell_command(bowtie_build_cmdline)
+		if not success_bowtie_build:
+			raise AlignmentError("Error during bowtie-build")
 
-	temp_files_to_remove.append(_prefix + '_output_build.txt')
-	temp_files_to_remove.append(_prefix + '_error_build.txt')
+		temp_files_to_remove.append(_prefix + '_output_build.txt')
+		temp_files_to_remove.append(_prefix + '_error_build.txt')
 
-	logger.info(f"Bowtie Starting for {mode}!")
-
+	
 	#crRNA_fasta = Reference Fasta File
+	logger.info(f"Bowtie Starting for {mode}!")
 	mismatch = args.mismatch if args.mismatch <= 3 else 3
 	cmdline_bowtie = bowtie_cmd(bowtie_index_prefix, crRNA_fasta, _prefix, mismatch, bowtie_path, args.CPU)
 	success_bowtie = run_shell_command(cmdline_bowtie)
 	if not success_bowtie:
-		raise AlignmentError("Error during offtarget filtering")
+		raise AlignmentError("Error during Conservation Scoring Alignment")
 
 	bowtie_summary = bowtie_to_summary(samfile, fasta_dict, mode = mode)
 	logger.info(f"Bowtie Done for {mode}!")

@@ -19,6 +19,7 @@ def main():
 	check_Rscripts()
 	check_Rscripts_tools()
 
+	print ("Installing Rpackages!")
 	MOD_NAME = "cas13gRNAtor"
 	FASTA = f"{PYTHON_FILE}/misc/data/test.fa"
 	os.system(" ".join(['Rscript', f'{PYTHON_FILE}/misc/RfxCas13d_GuideScoring.R', FASTA, f"{PYTHON_FILE}/misc/data/Cas13designGuidePredictorInput.csv", "true"]))

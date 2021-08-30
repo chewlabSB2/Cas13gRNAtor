@@ -14,7 +14,7 @@ from Bio import AlignIO, SeqIO
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from cas13gRNAtor.simpleBWA import *
+from cas13gRNAtor.simpleSearch import *
 
 PYTHON_FILE = os.path.dirname(os.path.abspath(__file__))
 
@@ -33,7 +33,8 @@ HEADER_MAIN_1 = [
 	'MatchPos',
 ]
 
-HEADER_MAIN_2 = ['GuideScores',
+HEADER_MAIN_2 = [
+	'GuideScores',
 	'Rank',
 	'standardizedGuideScores',
 	'quartiles',
@@ -41,6 +42,10 @@ HEADER_MAIN_2 = ['GuideScores',
 
 HEADER_MSA = [
 	'Found',
+	'Sequence_Found',
+	'Mismatch',
+	'Cigar',
+	'Intolerant',
 	'Entropy Mean score',
 	'Entropy SD score',
 	'Conservation Mean Score',
@@ -60,11 +65,19 @@ HEADER_BEST_gRNAs = [
 	'Weighted_Score'
 ]
 
+ALTERNATIVE_MAIN = [
+	'Consensus_Query',
+	'MatchPos',
+	'Mismatch',
+	'Cigar',
+	'Intolerant',
+]
+
 HEADER_WEIGHTED_SCORE = 'Weighted Score'
 HEADER_BOWTIE_OFFTARGETS = 'offtargets'
 HEADER_BOWTIE_CONSERVATION = 'Conservation %'
 
-ASSERT_MESSAGE_ALIGNMENT = "Either a Multiple Sequence Alignment (MSA) Fasta File or Non-MSA Fasta File required"
+ASSERT_MESSAGE_ALIGNMENT = "Either a Multiple Sequence Alignment (MSA) Fasta File or Non-MSA Fasta File is required"
 ASSERT_MESSAGE_SCORE = "Guide Scores from RfxCas13d_GuideScoring.R or Reference File Needed"
 
 
@@ -83,26 +96,39 @@ class Cas13gRNA():
 		self.SGS = None
 		self.quartile = None
 
-		self.mode = None
-		self.checked = False
-		self.found = False
+		## For Scoring in Validate Module 
+		self.found_reference = False
+		self._pos_reference = (0,0)
+		self.cigar_reference = ''
+		self.Intolerant_reference = False
+		self.mismatch_reference = 0
+		self.gRNA_query_reference = ''
+		#self.alternative_reference = [] #Returns the best
 
+		## For Consensus Sequence Search
+		self.mode = None
+		self.consensus_query = ''
+		self.found = False
+		self.cigar = ''
+		self.Intolerant = False
+		self.mismatch = 0
+		self.gRNA_query = ''
+		self.alternative = []
+
+		self.checked = False
 		self.c_mean = 0
 		self.e_mean = 0
 		self.c_mean_sensitive = 0
 		self.e_mean_sensitive = 0
-
 		self.c_SD = 0
 		self.e_SD = 0
 		self.c_SD_sensitive = 0
 		self.e_SD_sensitive = 0
-
 		self.c_score_list = []
 		self.e_score_list = []
-		self.mismatch = 0
 		self.weighted_score = 0
 
-		self.c_score_bowtie = None
+		self.c_score_bowtie = 0
 		self.offtargets = []
 		self.gRNA_len = LENGTH_OF_GRNA
 
@@ -137,6 +163,15 @@ class Cas13gRNA():
 	def pos(self, start):
 		end = start + LENGTH_OF_GRNA
 		self._pos = (start, end) #Relative to Strand
+
+	@property
+	def pos_reference(self):
+		return self._pos_reference
+
+	@pos_reference.setter
+	def pos_reference(self, start):
+		end = start + LENGTH_OF_GRNA
+		self._pos_reference = (start, end) #Relative to Strand
 
 def reverseC(seq):
 	RT = {'A':'T','C':'G','G':'C','T':'A', 'N':'N'}
@@ -291,8 +326,6 @@ def bowtie_to_summary(file, fasta_dict = {}, mode = "offtarget"):
 					fasta_dict[sgrna_name] = [genome_name]
 				else:
 					fasta_dict[sgrna_name].append(genome_name)
-
-			
 				## Consider Mutated BP in sensitive region?
 
 	if mode == "conservation":
@@ -381,16 +414,12 @@ def filter_gRNA(args, csv_file):
 			gRNA.rank = rank
 			gRNA.SGS = SGS
 			gRNA.quartile = quartile
-			gRNA.pos = int(columns[2]) - LENGTH_OF_GRNA - 1#0-based
+			gRNA.pos = int(columns[2]) - LENGTH_OF_GRNA - 1 #0-based
 			filtered_crRNA_fasta.write('>' + columns[0] + '\n' + sequence + '\n')
 			gRNA_classes.append(gRNA)
 
 	if not args.MSA: filtered_crRNA_fasta.close()
 	return crRNA_handle, gRNA_classes, max_guide_score
-
-def check_format_gRNAscore():
-	pass
-
 
 ## Plotting
 
@@ -481,7 +510,6 @@ def plot_highly_conserved_gRNA(crRNA_id, conservation_score, entropy_score, sequ
 	os.chdir("..")
 
 ## MultiProcessing 
-
 def partition(lst, n):
 	division = len(lst) / n
 	return [lst[round(division * i):round(division * (i + 1))] for i in range(n)]
@@ -490,24 +518,35 @@ def ranges(N, nb):
 	temp_list = [(r.start, r.stop) for r in partition(range(len(N)), nb)]
 	for i in temp_list: yield (i[0],i[1])
 
-def process_gRNA(consensus, gRNA_list, queue, conservation_list, entropy_list, max_guide_score, mismatch = 0, get_weighted_score = True):
-	bwa = simpleBWA(consensus)
+def process_gRNA(wavelet, gRNA_list, queue, conservation_list, entropy_list, max_guide_score, mismatch = 0, get_weighted_score = True):
+	consensus = wavelet.ReconstructSequence()
 	modified_gRNA = []
 	for gRNA in gRNA_list:
 		sequence = gRNA.seq 
-		matches = bwa.find_match(reverseC(sequence), mismatch)
-		if len(matches) >= 1:
-			gRNA.mode = "MSA"
-			gRNA.pos = matches[0] 
-			#start, end = gRNA.pos, gRNA.pos + LENGTH_OF_GRNA
+
+		gRNA.mode = "MSA"
+		matches = bitapSearch(consensus, reverseC(sequence), mismatch)
+		if matches:
+			best = matches.pop(0)
+			
+			## Best : Lowest Mismatch score
+			gRNA.consensus_query = reverseC(best.query)
+			gRNA.pos = best.pos[0]
+			gRNA.mismatch = best.editDistance
+			gRNA.Intolerant = best.intolerant
+			gRNA.cigar = best.cigar 
+
 			start, end = gRNA.pos[0], gRNA.pos[1]
 			gRNA.e_score_list = entropy_list[start:end]
 			gRNA.c_score_list = conservation_list[start:end]
 			gRNA.scoring(max_guide_score, get_weighted_score = get_weighted_score)
 			gRNA.found = True
-			modified_gRNA.append(gRNA)
+			
+			if matches: gRNA.alternative += matches
 		else:
-			modified_gRNA.append(gRNA)
+			gRNA.found = False
+
+		modified_gRNA.append(gRNA)
 
 	queue.put(modified_gRNA)
 
@@ -521,9 +560,13 @@ def queue_sam(q, edit_gRNAs):
 				edit_gRNAs.append(i)
 
 def write_all(args, gRNA_class_list, gRNA_freq = {}, scoring_method = (True, False), plot = True, weighted = True):
+	alternative = open(args.prefix + "_alternative_results.csv", 'w')
 	with open(args.prefix + "_combined_results.csv", 'w') as write_all:
 		write_all.write(",".join(HEADER_MAIN_1))
-		if weighted: write_all.write("," + ",".join(HEADER_MAIN_2))
+		alternative.write(",".join(HEADER_MAIN_1))
+		if weighted: 
+			write_all.write("," + ",".join(HEADER_MAIN_2))
+			alternative.write("," + ",".join(HEADER_MAIN_2))
 		if scoring_method[0]: ## MSA
 			write_all.write("," + ",".join(HEADER_MSA))
 			if weighted: write_all.write("," + HEADER_WEIGHTED_SCORE)
@@ -532,15 +575,24 @@ def write_all(args, gRNA_class_list, gRNA_freq = {}, scoring_method = (True, Fal
 		if args.offtarget: ## Offtarget
 			write_all.write("," + HEADER_BOWTIE_OFFTARGETS)
 
+		alternative.write("," + ",".join(ALTERNATIVE_MAIN))
 		write_all.write('\n')
+		alternative.write('\n')
+
+		missed = []
 		for g in gRNA_class_list:
+			if not g.found: 
+				missed.append(g)
+				continue
 			write_all.write(f"{g.id},{g.seq},{g.pos[0]}")
 			if weighted: write_all.write(f",{g.g_score},{g.rank},{g.SGS},{g.quartile}")
 			if scoring_method[0]: ## MSA
-				if g.found:
-					for i in range(g.pos[0], g.pos[1]):
-						gRNA_freq[i] += 1
-				write_all.write(f",{g.found},{g.e_mean},{g.e_SD},{g.c_mean},{g.c_SD},{g.e_mean_sensitive},{g.e_SD_sensitive},{g.c_mean_sensitive},{g.c_SD_sensitive}")
+				for i in range(g.pos[0], g.pos[1]):
+					gRNA_freq[i] += 1
+				
+				write_all.write(f",{g.found},{g.consensus_query},{g.mismatch},{g.cigar}")
+				write_all.write(f",{g.Intolerant},{g.e_mean},{g.e_SD},{g.c_mean},{g.c_SD},{g.e_mean_sensitive},{g.e_SD_sensitive},{g.c_mean_sensitive},{g.c_SD_sensitive}")
+				
 				if weighted: write_all.write(f",{g.weighted_score}")
 			if scoring_method[1]:
 				write_all.write(f",{g.c_score_bowtie}")
@@ -549,7 +601,28 @@ def write_all(args, gRNA_class_list, gRNA_freq = {}, scoring_method = (True, Fal
 					for genome in g.offtargets:
 						write_all.write(f",{genome}")
 
+			if g.alternative:
+				for p in g.alternative:
+					alternative.write(f"{g.id},{g.seq},{g.pos[0]}")
+					if weighted: alternative.write(f",{g.g_score},{g.rank},{g.SGS},{g.quartile}")
+					alternative.write(f",{p.query},{p.pos[0]},{p.editDistance},{p.cigar},{p.intolerant}\n")
+
 			write_all.write('\n')
+
+	alternative.close()
+
+	if missed:
+		with open(args.prefix + "_unfound.csv", 'w') as unfound:
+			unfound.write(",".join(HEADER_MAIN_1))
+			if weighted: unfound.write("," + ",".join(HEADER_MAIN_2))
+			if scoring_method[1]: unfound.write("," + HEADER_BOWTIE_CONSERVATION)
+			
+			unfound.write('\n')
+			for g in missed:
+				unfound.write(f"{g.id},{g.seq},{g.pos[0]}")
+				if weighted: unfound.write(f",{g.g_score},{g.rank},{g.SGS},{g.quartile}")
+				if scoring_method[1]: unfound.write(f",{g.c_score_bowtie}")
+				unfound.write('\n')
 
 	return gRNA_freq
 
@@ -568,6 +641,7 @@ def write_best(args, gRNA_class_list, top = 100, plot = True):
 		for g in gRNA_class_list:
 			if count > top: break
 			if g.offtargets: continue
+			if not g.found: continue
 			write_best.write(f"{g.id},{g.seq},{g.c_mean},{g.c_mean_sensitive},{g.g_score},{g.weighted_score}")
 			if write_bowtie_score: 
 				write_best.write(f",{g.c_score_bowtie}")
@@ -596,10 +670,11 @@ def multi_search(args, consensus, gRNA_list, conservation_list, entropy_list, ma
 	edit_gRNAs = manager.list()
 	conservation_list = RawArray(ctypes.c_float, conservation_list)
 	entropy_list = RawArray(ctypes.c_float, entropy_list)
+	wavelet = Wavelet_Tree(consensus)
 
 	for i in ranges(gRNA_list, number_processors):
 		current_gRNAs = gRNA_list[i[0]:i[1]]
-		pp = Process(target = process_gRNA, args=(consensus, current_gRNAs, q, conservation_list, entropy_list, max_guide_score, args.mismatch, get_weighted_score))
+		pp = Process(target = process_gRNA, args=(wavelet, current_gRNAs, q, conservation_list, entropy_list, max_guide_score, args.mismatch, get_weighted_score))
 		current_processes.append(pp)
 
 	for pp in current_processes:
