@@ -38,6 +38,8 @@ With reference to the test dataset (EV71 Virus)
 mafft --add NonMSAEV71.fasta --keeplength --reorder --nomemsave --thread $thread referenceEV71.fasta 1> MSAEV71.fasta 2> error.log
 cas13gRNAtor -r referenceEV71.fasta -m MSAEV71.fasta -bc NonMSAEV71.fasta -t 8 -p cas13gRNAtor --mismatch 5 -bo Homo_sapiens.GRCh38.cdna.all.fa
 ```
+Sample Results are found [here](https://github.com/chewlabSB2/Cas13gRNAtor-results)
+
 cas13gRNAtor includes [Wessel's gRNA scoring](https://gitlab.com/sanjanalab/cas13/-/tree/master/Cas13designGuidePredictor) and [bowtie](http://bowtie-bio.sourceforge.net/manual.shtml) to filter for offtargets with up to 3 mismatches. Only 3rd and 4th quartile from Wessel's gRNA scoring and prediction are included in the final output. Mafft's output is used to generate a consensus sequence to calculate the Shannon Entropy and conservation scores for each guide RNA. cas13gRNAtor prints the top 100 guide RNA based on a weighted score. 
 
 ### Cas13gRNAvalidate Simple Usage
