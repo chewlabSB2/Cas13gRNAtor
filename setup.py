@@ -64,6 +64,7 @@ setup(
             "cas13gRNAscore={}.cas13gRNAscore:main".format(MOD_NAME),
             "cas13gRNAvalidate={}.cas13gRNAvalidate:main".format(MOD_NAME),
             "cas13gRNAinstall={}.installRpackage:main".format(MOD_NAME),
+            "cas13gRNApanvirus={}.cas13gRNApanvirus:main".format(MOD_NAME),
             #"cas13gRNApredict={}.gRNA_score:main".format(MOD_NAME),
         ],
     },

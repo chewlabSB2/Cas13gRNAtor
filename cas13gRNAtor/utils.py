@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import shlex
+import math
 import os
 import re
 import sys
@@ -14,6 +15,8 @@ from Bio import AlignIO, SeqIO
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import pandas as pd
+import seaborn as sns
 from cas13gRNAtor.simpleSearch import *
 
 PYTHON_FILE = os.path.dirname(os.path.abspath(__file__))
@@ -34,35 +37,35 @@ HEADER_MAIN_1 = [
 ]
 
 HEADER_MAIN_2 = [
+	'Reference',
 	'GuideScores',
 	'Rank',
-	'standardizedGuideScores',
-	'quartiles',
+	'StandardizedGuideScores',
+	'Quartiles',
 ]
 
 HEADER_MSA = [
-	'Found',
 	'Sequence_Found',
+	'Consensus_Pos',
 	'Mismatch',
 	'Cigar',
 	'Intolerant',
-	'Entropy Mean score',
-	'Entropy SD score',
-	'Conservation Mean Score',
-	'Conservation SD Score',
-	'Intolerant region Entropy Mean',
-	'Intolerant region Entropy SD',
-	'Intolerant region Conservation Mean',
-	'Intolerant region Conservation SD',
+	'Entropy_Sum',
+	'Conservation_Mean_Score',
+	'Conservation_SD_Score',
+	'Intolerant_region_Entropy_Sum',
+	'Intolerant_region_Conservation_Mean',
+	'Intolerant_region_Conservation_SD',
 ]
 
 HEADER_BEST_gRNAs = [
 	'GuideName',
 	'GuideSeq',
-	'gRNA_Conservation Mean',
-	'gRNA_Intolerant_region_Conservation Mean',
+	'gRNA_Conservation_Mean',
+	'gRNA_Intolerant_region_Conservation_Mean',
 	'GuideScore',
-	'Weighted_Score'
+	'Weighted_Score',
+	'Weighted_Rank',
 ]
 
 ALTERNATIVE_MAIN = [
@@ -73,9 +76,11 @@ ALTERNATIVE_MAIN = [
 	'Intolerant',
 ]
 
-HEADER_WEIGHTED_SCORE = 'Weighted Score'
+HEADER_WEIGHTED_SCORE = 'Weighted_Score'
 HEADER_BOWTIE_OFFTARGETS = 'offtargets'
-HEADER_BOWTIE_CONSERVATION = 'Conservation %'
+HEADER_BOWTIE_CONSERVATION = 'Conservation_%'
+HEADER_RANK_SCORE = "Rank"
+HEADER_WEIGHTED_RANK = 	'Weighted_Rank'
 
 ASSERT_MESSAGE_ALIGNMENT = "Either a Multiple Sequence Alignment (MSA) Fasta File or Non-MSA Fasta File is required"
 ASSERT_MESSAGE_SCORE = "Guide Scores from RfxCas13d_GuideScoring.R or Reference File Needed"
@@ -95,6 +100,7 @@ class Cas13gRNA():
 		self.rank = None 
 		self.SGS = None
 		self.quartile = None
+		self.reference = ''
 
 		## For Scoring in Validate Module 
 		self.found_reference = False
@@ -106,8 +112,10 @@ class Cas13gRNA():
 		#self.alternative_reference = [] #Returns the best
 
 		## For Consensus Sequence Search
+		self.name = None
 		self.mode = None
 		self.consensus_query = ''
+		self._pos_consensus = (0,0)
 		self.found = False
 		self.cigar = ''
 		self.Intolerant = False
@@ -117,43 +125,45 @@ class Cas13gRNA():
 
 		self.checked = False
 		self.c_mean = 0
-		self.e_mean = 0
+		self.e_sum = 0
 		self.c_mean_sensitive = 0
-		self.e_mean_sensitive = 0
+		self.e_sum_sensitive = 0
 		self.c_SD = 0
-		self.e_SD = 0
 		self.c_SD_sensitive = 0
-		self.e_SD_sensitive = 0
 		self.c_score_list = []
 		self.e_score_list = []
 		self.weighted_score = 0
+		self.e_rank = float('inf')
+		self.w_rank = float('inf')
+		self.e_sensitive_rank = float('inf')
+		self.final_weighted_rank = 0
 
 		self.c_score_bowtie = 0
 		self.offtargets = []
 		self.gRNA_len = LENGTH_OF_GRNA
+		self.RANK = None
+
+	def get_fwr(self):
+		self.final_weighted_rank = round(math.log10(self.e_rank * self.w_rank * self.e_sensitive_rank), 5) + 1e-10
 
 	def scoring(self, cap_guidescore, get_weighted_score = True):
 		self.c_mean = round(np.mean(self.c_score_list), 5)
 		sample_variance = np.sum(((self.c_score_list - self.c_mean)**2) / (LENGTH_OF_GRNA - 1))
 		self.c_SD = round(np.sqrt(sample_variance),5)
 		
-		self.e_mean = round(np.mean(self.e_score_list), 5)
-		sample_variance = np.sum(((self.e_score_list - self.e_mean)**2) / (LENGTH_OF_GRNA - 1))
-		self.e_SD = round(np.sqrt(sample_variance),5)
+		self.e_sum = round(np.sum(self.e_score_list), 5)
 		
 		self.c_mean_sensitive = round(np.mean(self.c_score_list[RANGE_START:RANGE_END]), 5)
 		sample_variance = np.sum(((self.c_score_list[RANGE_START:RANGE_END] - self.c_mean_sensitive)**2) / (LENGTH_OF_INTOLERANT - 1))
 		self.c_SD_sensitive = round(np.sqrt(sample_variance),5)
 		
-		self.e_mean_sensitive = round(np.mean(self.e_score_list[RANGE_START:RANGE_END]), 5)
-		sample_variance = np.sum(((self.e_score_list[RANGE_START:RANGE_END] - self.e_mean_sensitive)**2) / (LENGTH_OF_INTOLERANT - 1))
-		self.e_SD_sensitive = round(np.sqrt(sample_variance),5)
-		
+		self.e_sum_sensitive = round(np.sum(self.e_score_list[RANGE_START:RANGE_END]), 5)
+
 		self.checked = True
 		if get_weighted_score:
 			self.weighted_score = (0.5*(self.g_score/cap_guidescore) + 0.35*self.c_mean_sensitive  + 0.15*self.c_mean)
 			self.weighted_score = round(self.weighted_score, 5)
-		
+	
 
 	@property
 	def pos(self):
@@ -173,6 +183,21 @@ class Cas13gRNA():
 		end = start + LENGTH_OF_GRNA
 		self._pos_reference = (start, end) #Relative to Strand
 
+	@property
+	def pos_consensus(self):
+		return self._pos_consensus
+
+	@pos_consensus.setter
+	def pos_consensus(self, start):
+		end = start + LENGTH_OF_GRNA
+		self._pos_consensus = (start, end) #Relative to Strand
+
+def fasta_2_Wavelet(reference):
+	reference = list(SeqIO.parse(reference, "fasta"))[0]
+	reference = ''.join(reference)
+	wavelet = Wavelet_Tree(reference)
+	return wavelet
+
 def reverseC(seq):
 	RT = {'A':'T','C':'G','G':'C','T':'A', 'N':'N'}
 	reverseComplement = ''
@@ -180,6 +205,13 @@ def reverseC(seq):
 		nt = RT.get(i)
 		reverseComplement += nt
 	return reverseComplement[::-1]
+
+def delete_files(temp_files_to_remove, temp = True):
+	if temp:
+		for fname in temp_files_to_remove:
+			os.remove(fname)      
+		logger.info("Temporary files removed!")
+		
 
 ## Conservation And Entropy Score Calculation
 
@@ -224,10 +256,6 @@ def calc_frequencies(MSA):
 	mat /= np.sum(mat, axis=0) 
 	return mat
 
-def calc_entropy(mat):
-	## Shannon's Entropy for each position in MSA
-	return [round(x, 5) for x in (-1) * np.sum(mat * np.log2(mat + 1e-15), axis=0)]
-
 def consensus_seq(mat):
 	## Get Consensus Sequence from matrix for wessels gRNA scoring
 	consensus = []
@@ -258,10 +286,21 @@ def write_score(entropy_score_table, conservation_score_table, consensus_sequenc
 		score_csv.write(str(i+1) + '\t' + str(entropy_score_table[i]) + '\t' + str(conservation_score_table[i]) +  '\t' + consensus_sequence[i] + '\n')
 	score_csv.close()
 
+def calc_entropy(mat):
+	## Shannon's Entropy for each position in MSA
+	return [round(x, 5) for x in (-1) * np.sum(mat * np.log2(mat + 1e-15), axis=0)]
+
+
+RANDOM_ENTROPY = 5 * (-0.2) * math.log2(0.2)
+def calc_bits(mat):
+	return [round(RANDOM_ENTROPY - x , 5) for x in (-1) * np.sum(mat * np.log2(mat + 1e-15), axis=0)]
+
+
 def main_calc(MSA, prefix):
 	prettify_gaps(MSA)
 	matrix = calc_frequencies(MSA)
 	entropy_list = calc_entropy(matrix)
+	bit_list = calc_bits(matrix)
 	consensus, conservation_list = consensus_seq(matrix)
 	conservation_list = [round(i, 5) for i in conservation_list]
 	write_score(entropy_list, conservation_list, consensus, prefix)
@@ -301,7 +340,8 @@ def bowtie_cmd(bow, reference_fasta, prefix, mismatch, bowtie_path = 'bowtie', t
 	cmd = '%s -a -S %s -f %s %s.sam -v %d --threads %d'%(bowtie_path, bow, reference_fasta, prefix, mismatch, thread)
 	return cmd
 
-def bowtie_to_summary(file, fasta_dict = {}, mode = "offtarget"):
+def bowtie_to_summary(file, fasta_dict = {}, mode = "offtarget", sensitive_range = (2,7)):
+	pattern = r"(\d+)([ACGT])"
 	file = open(file, '+r')
 	filtered_sgrna = dict()
 	seq_count = 0
@@ -319,6 +359,17 @@ def bowtie_to_summary(file, fasta_dict = {}, mode = "offtarget"):
 		genome_name = cols[2]
 		if mapping_status == 16:
 			if mode == "conservation":
+				MD_tag = cols[12].replace("MD:Z:", "")
+				sensitive_count = 0
+				intolerant = False
+				if MD_tag != "0":
+					for count, letter in re.findall(pattern, MD_tag):
+						sensitive_count += int(count) 
+						if sensitive_count in sensitive_range:
+							intolerant = True
+							break
+
+				if intolerant: continue
 				fasta_dict[sgrna_name] += 1
 		
 			if mode == "offtarget":
@@ -347,6 +398,20 @@ def update_class(gRNA_class_list, conservation_summary = {}, offtarget_summary =
 	return updated_gRNA
 
 ## Rscript
+class GuideScore():
+
+	def __init__(self, matchpos, standardizedGuideScore, quartile):
+		self.matchpos = int(matchpos)
+		self.standardizedGuideScore = float(standardizedGuideScore)
+		self.quartile = int(quartile)
+
+	def to_dict(self):
+		return {
+			'matchpos': self.matchpos,
+			'standardizedGuideScore': self.standardizedGuideScore,
+			'quartile': self.quartile
+		}
+
 def check_Rscripts():
 	if not is_tool('Rscript'):
 		raise AlignmentError("Rscript is not installed")
@@ -383,51 +448,64 @@ def get_csv_file(directory, suffix):
 	latest_file = max(temp_list, key=os.path.getmtime)
 	return latest_file
 
-def filter_gRNA(args, csv_file):
+def filter_gRNA(args, csv_file, reference_handle = None, check_removeUUUU = True):
 	#global max_guide_score
-	removeUUUU = args.homopolymer
+	if check_removeUUUU:
+		removeUUUU = args.homopolymer
+	else:
+		removeUUUU = True
 	max_guide_score = 0
 	csv_file = open(csv_file, 'r')
 	gRNA_classes = [] 
 	crRNA_handle = args.prefix + '_4thQuartile_gRNA.fasta'
 	filtered_crRNA_fasta = open(crRNA_handle, 'w+')
+	if not reference_handle:
+		reference_handle = args.reference
+	record = SeqIO.read(reference_handle, "fasta") 
+	reference = str(record.id)
 
+	guidescore = []
 	next(csv_file)
 	for line in csv_file:
 		line = line.strip('\n')
 		columns = line.split(',')
+		temp = GuideScore(columns[2], columns[5], columns[6])
+		guidescore.append(temp)
+		
 		sequence = columns[1].upper()
 		if 'N' in sequence:
 			continue
 		if removeUUUU and 'TTTT' in sequence:
 			continue
 		if int(columns[-1]) >= 3:
-			guidescore = float(columns[3])
-			if max_guide_score < guidescore:
-				max_guide_score = guidescore
+			g_score = float(columns[3])
+			if max_guide_score < g_score:
+				max_guide_score = g_score
 
 			rank = float(columns[4])
 			SGS = float(columns[5])
 			quartile = int(columns[6])
 			gRNA = Cas13gRNA(columns[0], sequence)
-			gRNA.g_score = guidescore
+			gRNA.g_score = g_score
 			gRNA.rank = rank
 			gRNA.SGS = SGS
 			gRNA.quartile = quartile
+			gRNA.reference = reference
 			gRNA.pos = int(columns[2]) - LENGTH_OF_GRNA - 1 #0-based
 			filtered_crRNA_fasta.write('>' + columns[0] + '\n' + sequence + '\n')
 			gRNA_classes.append(gRNA)
 
-	if not args.MSA: filtered_crRNA_fasta.close()
-	return crRNA_handle, gRNA_classes, max_guide_score
+	filtered_crRNA_fasta.close()
+	guidescore.sort(key=lambda x: x.matchpos, reverse=False)
+	return crRNA_handle, gRNA_classes, max_guide_score, guidescore
 
 ## Plotting
 
 def get_moving_average(score, window_size = 10):
-	#score = list(score.values())
-	position = [x for x in range(len(score))]
+	if window_size == 0:
+		return score
+	
 	i = 0
-
 	moving_averages = []
 	if window_size == 0: window_size = 1
 	while i < len(score) - window_size + 1:
@@ -436,9 +514,80 @@ def get_moving_average(score, window_size = 10):
 		moving_averages.append(window_average)
 		i += 1
 	
-	#moving_average = dict(zip(position, moving_averages))
 	return moving_averages
 
+def plot_conservation(entropy, conservation, prefix):
+	plt.switch_backend('agg')
+	fig, ax = plt.subplots(figsize=(15, 5), sharex=True)
+
+	ax.plot([i for i in range(len(conservation))], conservation, linestyle="", color="blue", marker="o", markersize = 0.5)
+	ax.set_ylabel("Conservation %",color="blue",fontsize=14)
+	ax.tick_params(axis="x", labelsize=12) 
+	ax.tick_params(axis='x', which='both', labelsize=10, labelbottom=True)
+	
+	ax2 = ax.twinx()
+	ax2.plot([i for i in range(len(entropy))], entropy, linestyle="", color="red", marker="o", markersize = 0.5)
+	ax2.set_ylabel("Entropy",color="red",fontsize=14)
+
+	fig.suptitle(f'{prefix} Entropy | Conservation Score',  fontsize=16)
+	figure = plt.gcf() # get current figure
+	figure.set_size_inches(12, 8)
+	plt.grid(False)
+	plt.savefig(prefix + '_combined_genome_plot.png', dpi = 360)
+
+def plot_guidescore(entropy, conservation, guidescore_data, prefix):
+	plt.switch_backend('agg')
+	guidescore_adjusted_range, guidescore_adjusted, data = guidescore_data
+	fig, ax = plt.subplots(2,1,figsize=(15, 5), sharex=True)
+
+	ax[0].plot([i for i in range(len(conservation))], conservation, linestyle="", color="blue", marker="o", markersize = 0.5)
+	ax[0].set_ylabel("Conservation %",color="blue",fontsize=14)
+	ax[0].tick_params(axis="x", labelsize=12) 
+	ax[0].tick_params(axis='x', which='both', labelsize=10, labelbottom=True)
+	
+	ax2 = ax[0].twinx()
+	ax2.plot([i for i in range(len(entropy))], entropy, linestyle="", color="red", marker="o", markersize = 0.5)
+	ax2.set_ylabel("Entropy",color="red",fontsize=14)
+
+	fig.suptitle(f'{prefix} Entropy | Conservation | gRNA On-Target Score',  fontsize=16)
+	ax[1].set_ylabel("Guide Score", fontsize=14)
+	
+	ax3 = sns.scatterplot(ax=ax[1], y=data.standardizedGuideScore, x=data.matchpos, hue=data.quartile, s=3, palette="Dark2")
+	ax3.legend(loc='upper right', fontsize = 10)
+	ax[1].plot(guidescore_adjusted_range, guidescore_adjusted, linewidth = 1, color="black", markersize = 0, alpha=0.8)
+
+	ax[1].set_xlabel("Nucleotide Position",fontsize=14)
+	figure = plt.gcf() # get current figure
+	figure.set_size_inches(12, 8)
+	plt.grid(False)
+	plt.savefig(prefix + '_combined_genome_plot.png', dpi = 360)
+
+def plot_everything(entropy, conservation, prefix, moving_average=0, guidescore = []):
+	plt.switch_backend('agg')
+	og_len = len(entropy)
+	entropy = get_moving_average(entropy, moving_average)
+	conservation = get_moving_average(conservation, moving_average)
+
+	if guidescore:
+		## Adjust Guidescore Indexing
+		guidescore_dict = {k.matchpos:k.standardizedGuideScore for k in guidescore}
+		data = pd.DataFrame.from_records([s.to_dict() for s in guidescore])
+		guidescore_fillzeros = {k:0 for k in range(og_len)}
+		for k,v in enumerate(guidescore):
+			guidescore_fillzeros[v.matchpos] = v.standardizedGuideScore
+
+		guidescore_adjusted = get_moving_average([v for k,v in guidescore_fillzeros.items()], moving_average)
+		guidescore_min = min([k for k,v in guidescore_fillzeros.items()])
+		guidescore_adjusted_range = [i + guidescore_min for i in range(len(guidescore_adjusted))]
+		guidescore_data = (guidescore_adjusted_range, guidescore_adjusted, data)
+		plot_guidescore(entropy, conservation, guidescore_data, prefix)
+	
+	else:
+		plot_conservation(entropy, conservation, prefix)
+
+
+
+'''
 def plot_everything(entropy, conservation, prefix, gRNA_list = []):
 	plt.switch_backend('agg')
 	ax1 = plt.subplot(311) if gRNA_list else plt.subplot(211)
@@ -465,6 +614,7 @@ def plot_everything(entropy, conservation, prefix, gRNA_list = []):
 	figure = plt.gcf() # get current figure
 	figure.set_size_inches(12, 4)
 	plt.savefig(prefix + '_combined_genome_plot.png', dpi = 360)
+'''
 
 def break_apart(word):
 	return [char for char in word]
@@ -531,14 +681,16 @@ def process_gRNA(wavelet, gRNA_list, queue, conservation_list, entropy_list, max
 			
 			## Best : Lowest Mismatch score
 			gRNA.consensus_query = reverseC(best.query)
-			gRNA.pos = best.pos[0]
+			gRNA.pos_consensus = best.pos[0]
 			gRNA.mismatch = best.editDistance
 			gRNA.Intolerant = best.intolerant
 			gRNA.cigar = best.cigar 
 
-			start, end = gRNA.pos[0], gRNA.pos[1]
+			start, end = gRNA.pos_consensus[0], gRNA.pos_consensus[1]
 			gRNA.e_score_list = entropy_list[start:end]
 			gRNA.c_score_list = conservation_list[start:end]
+			if not gRNA.e_score_list or not gRNA.c_score_list:
+				raise AlignmentError(f"{start} {end} {gRNA.e_score_list} {gRNA.c_score_list}")
 			gRNA.scoring(max_guide_score, get_weighted_score = get_weighted_score)
 			gRNA.found = True
 			
@@ -569,10 +721,12 @@ def write_all(args, gRNA_class_list, gRNA_freq = {}, scoring_method = (True, Fal
 			alternative.write("," + ",".join(HEADER_MAIN_2))
 		if scoring_method[0]: ## MSA
 			write_all.write("," + ",".join(HEADER_MSA))
-			if weighted: write_all.write("," + HEADER_WEIGHTED_SCORE)
+			if weighted: 
+				write_all.write("," + HEADER_WEIGHTED_SCORE)
+				write_all.write("," + HEADER_WEIGHTED_RANK)
 		if scoring_method[1]: ## Conservation
 			write_all.write("," + HEADER_BOWTIE_CONSERVATION)
-		if args.offtarget: ## Offtarget
+		if args.offtarget or args.offtarget_index: ## Offtarget
 			write_all.write("," + HEADER_BOWTIE_OFFTARGETS)
 
 		alternative.write("," + ",".join(ALTERNATIVE_MAIN))
@@ -584,28 +738,30 @@ def write_all(args, gRNA_class_list, gRNA_freq = {}, scoring_method = (True, Fal
 			if not g.found: 
 				missed.append(g)
 				continue
-			write_all.write(f"{g.id},{g.seq},{g.pos[0]}")
-			if weighted: write_all.write(f",{g.g_score},{g.rank},{g.SGS},{g.quartile}")
+			write_all.write(f"{g.id},{g.seq},{g.pos[0] + 2}")
+			if weighted: write_all.write(f",{g.reference},{round(g.g_score, 5)},{g.rank},{round(g.SGS, 5)},{g.quartile}")
 			if scoring_method[0]: ## MSA
-				for i in range(g.pos[0], g.pos[1]):
+				for i in range(g.pos_consensus[0], g.pos_consensus[1]):
 					gRNA_freq[i] += 1
 				
-				write_all.write(f",{g.found},{g.consensus_query},{g.mismatch},{g.cigar}")
-				write_all.write(f",{g.Intolerant},{g.e_mean},{g.e_SD},{g.c_mean},{g.c_SD},{g.e_mean_sensitive},{g.e_SD_sensitive},{g.c_mean_sensitive},{g.c_SD_sensitive}")
+				write_all.write(f",{g.consensus_query},{g.pos_consensus[0] + 1},{g.mismatch},{g.cigar}")
+				write_all.write(f",{g.Intolerant},{g.e_sum},{g.c_mean},{g.c_SD},{g.e_sum_sensitive},{g.c_mean_sensitive},{g.c_SD_sensitive}")
 				
-				if weighted: write_all.write(f",{g.weighted_score}")
+				if weighted: 
+					write_all.write(f",{g.weighted_score},{round(g.final_weighted_rank,5)}")
+			
 			if scoring_method[1]:
 				write_all.write(f",{g.c_score_bowtie}")
-			if args.offtarget:
+			if args.offtarget or args.offtarget_index:
 				if g.offtargets:
 					for genome in g.offtargets:
 						write_all.write(f",{genome}")
 
 			if g.alternative:
 				for p in g.alternative:
-					alternative.write(f"{g.id},{g.seq},{g.pos[0]}")
-					if weighted: alternative.write(f",{g.g_score},{g.rank},{g.SGS},{g.quartile}")
-					alternative.write(f",{p.query},{p.pos[0]},{p.editDistance},{p.cigar},{p.intolerant}\n")
+					alternative.write(f"{g.id},{g.seq},{g.pos[0] + 2}")
+					if weighted: alternative.write(f",{g.reference},{round(g.g_score,5)},{g.rank},{round(g.SGS,5)},{g.quartile}")
+					alternative.write(f",{p.query},{p.pos[0] + 1},{p.editDistance},{p.cigar},{p.intolerant}\n")
 
 			write_all.write('\n')
 
@@ -620,7 +776,7 @@ def write_all(args, gRNA_class_list, gRNA_freq = {}, scoring_method = (True, Fal
 			unfound.write('\n')
 			for g in missed:
 				unfound.write(f"{g.id},{g.seq},{g.pos[0]}")
-				if weighted: unfound.write(f",{g.g_score},{g.rank},{g.SGS},{g.quartile}")
+				if weighted: unfound.write(f",{g.reference},{g.g_score},{g.rank},{g.SGS},{g.quartile}")
 				if scoring_method[1]: unfound.write(f",{g.c_score_bowtie}")
 				unfound.write('\n')
 
@@ -642,7 +798,7 @@ def write_best(args, gRNA_class_list, top = 100, plot = True):
 			if count > top: break
 			if g.offtargets: continue
 			if not g.found: continue
-			write_best.write(f"{g.id},{g.seq},{g.c_mean},{g.c_mean_sensitive},{g.g_score},{g.weighted_score}")
+			write_best.write(f"{g.id},{g.seq},{g.c_mean},{g.c_mean_sensitive},{g.g_score},{g.weighted_score},{g.final_weighted_rank}")
 			if write_bowtie_score: 
 				write_best.write(f",{g.c_score_bowtie}")
 			write_best.write("\n")
@@ -654,6 +810,7 @@ def write_supplementary_data(args, gRNA_class_list):
 	with open(args.prefix + "_conservation.csv", 'w') as write_conservation:
 		with open(args.prefix + "_entropy.csv", 'w') as write_entropy:
 			for g in gRNA_class_list:
+				if not g.found: continue
 				entropy_list =  [str(round(x, 5)) for x in g.e_score_list]
 				conservation_list =  [str(round(x, 5)) for x in g.c_score_list]
 				write_entropy.write(f"{g.id},{g.seq},{g.pos[0]}," + ",".join(entropy_list) + "\n")
@@ -690,7 +847,49 @@ def multi_search(args, consensus, gRNA_list, conservation_list, entropy_list, ma
 	sink.join()
 
 	edit_gRNAs = list(edit_gRNAs)
-	if edit_gRNAs[0].weighted_score: edit_gRNAs.sort(key=lambda x: x.weighted_score, reverse=True)
+	if edit_gRNAs[0].weighted_score: 
+		edit_gRNAs.sort(key=lambda x: x.weighted_score, reverse=True)
+		rank = 0
+		last_score = 0
+		for g in edit_gRNAs:
+			if not g.found: continue
+			if last_score != g.weighted_score:
+				rank += 1
+
+			g.w_rank = rank
+			last_score = g.weighted_score
+
+		edit_gRNAs.sort(key=lambda x: x.e_sum, reverse=False)
+		rank = 0
+		last_score = float('inf')
+		for g in edit_gRNAs:
+			if not g.found: continue
+			if last_score != g.e_sum:
+				rank += 1
+
+			g.e_rank = rank
+			last_score = g.e_sum
+
+		edit_gRNAs.sort(key=lambda x: x.e_sum_sensitive, reverse=False)
+		rank = 0
+		last_score = float('inf')
+		for g in edit_gRNAs:
+			if not g.found: continue
+			if last_score != g.e_sum_sensitive:
+				rank += 1
+
+			g.e_sensitive_rank = rank
+			last_score = g.e_sum_sensitive
+			g.get_fwr()
+			if g.final_weighted_rank == 0:
+				raise AlignmentError("FWR INF")
+
+		edit_gRNAs.sort(key=lambda x: x.final_weighted_rank, reverse=False)
+	
+	if edit_gRNAs[0].checked:
+		edit_gRNAs.sort(key=lambda x: x.Intolerant, reverse=False)
+		edit_gRNAs.sort(key=lambda x: x.mismatch, reverse=False)
+		
 	return edit_gRNAs
 
 ## Other Functions

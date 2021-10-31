@@ -128,7 +128,7 @@ def open_scorefile(scorefile):
 				reference += sequence[-1]
 	return reference			
 
-def get_gRNAs(args, random):
+def _get_gRNAs(args, random):
 	temp_files_to_remove = []
 	check_Rscripts()
 	check_Rscripts_tools()
@@ -144,7 +144,6 @@ def get_gRNAs(args, random):
 		raise AlignmentError("Error during gRNA scoring")
 	logger.info("gRNA scoring and prediction done!")
 	
-
 	Rfiles = [f'{reference.id}_CasRxguides.fa', f'{reference.id}_CasRxguides.csv'] #, 'Consensus_Sequence_CasRxguides.pdf'
 	temp_files_to_remove += Rfiles
 
@@ -234,14 +233,13 @@ def multi_gRNA_score(args, gRNA_class_list, reference = None):
 
 	if args.reference:
 		number_processors -= 1
-		p = Process(target=get_gRNAs, args = (args, None))
+		p = Process(target=_get_gRNAs, args = (args, None))
 		current_processes.append(p)
-		reference = list(SeqIO.parse(args.reference, "fasta"))[0]
-		reference = ''.join(reference)
+		wavelet = fasta_2_Wavelet(args.reference)
 
 	manager = Manager()
 	edit_gRNAs = manager.list()
-	wavelet = Wavelet_Tree(reference)
+	
 	del reference
 
 	for i in ranges(gRNA_class_list, number_processors):

@@ -3,3 +3,5 @@ numpy
 biopython
 tqdm
 bitarray
+pandas
+seaborn

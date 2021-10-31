@@ -16,7 +16,6 @@ Plot The Shannon Entropy, Conservation and gRNA freq of the Genome
 Plot The Shannon Entropy and Conservation Score for the best 100 gRNAs 
 '''
 
-#To-do
 def get_args():
 	parser = argparse.ArgumentParser(
 		prog = 'cas13gRNAtor',
@@ -64,21 +63,28 @@ def get_args():
 		assert args.bowtie or args.conservation_index, ASSERT_MESSAGE_ALIGNMENT
 	elif not args.bowtie or not args.conservation_index:
 		assert args.MSA, ASSERT_MESSAGE_ALIGNMENT
+
+	if args.offtarget_index or args.conservation_index:
+		args.temp = False
 			
 	return args
 
-def get_gRNAs(args):
+def get_gRNAs(args, reference = None, scorefile = False):
 	temp_files_to_remove = []
-	if not args.scorefile:
+	check_removeUUUU = False
+	if not scorefile:
 		check_Rscripts()
 		check_Rscripts_tools()
 
 		logger.info("gRNA scoring and prediction starting!")
 		#gRNA scoring from consensus sequence
-		reference = list(SeqIO.parse(args.reference, "fasta"))[0]
-		reference_len = len(reference)
+		if not reference:
+			reference = args.reference
+			check_removeUUUU = True
+		reference_seq = list(SeqIO.parse(reference, "fasta"))[0]
+		reference_len = len(reference_seq)
 		logger.info(f"Reference Length is {reference_len}!")
-		cmd_gRNA = generate_gRNA_scores(args.reference)
+		cmd_gRNA = generate_gRNA_scores(reference)
 		success_gRNA = run_shell_command(cmd_gRNA)
 		if not success_gRNA:
 			raise AlignmentError("Error during gRNA scoring")
@@ -86,18 +92,21 @@ def get_gRNAs(args):
 		cwd = os.path.abspath(os.getcwd())
 		csv_file = get_csv_file(cwd, 'CasRxguides.csv')
 
-		Rfiles = [f'{reference.id}_CasRxguides.fa', f'{reference.id}_CasRxguides.csv'] #, 'Consensus_Sequence_CasRxguides.pdf'
+		Rfiles = [f'{reference_seq.id}_CasRxguides.fa', f'{reference_seq.id}_CasRxguides.csv'] #, 'Consensus_Sequence_CasRxguides.pdf'
 		temp_files_to_remove += Rfiles
 	else:
 		csv_file = args.scorefile
+		if not reference:
+			reference = args.reference
+			check_removeUUUU = True
 
-	crRNA_handle, gRNA_classes, max_guide_score = filter_gRNA(args, csv_file)
+	crRNA_handle, gRNA_classes, max_guide_score, guidescore_list = filter_gRNA(args, csv_file, reference_handle = reference, check_removeUUUU = check_removeUUUU)
 	temp_files_to_remove.append(crRNA_handle)
 
-	return crRNA_handle, gRNA_classes, temp_files_to_remove, max_guide_score
+	return crRNA_handle, gRNA_classes, temp_files_to_remove, max_guide_score, guidescore_list
 
 def bowtie_main(args, crRNA_fasta, fasta_dict = {}, mode = 'offtarget'):
-	if mode == 'offtarget' and not args.offtarget:
+	if mode == 'offtarget' and (not args.offtarget and not args.offtarget_index):
 		return {}, []
 
 	temp_files_to_remove = []
@@ -177,7 +186,7 @@ def get_scores(args, gRNA_class_list, crRNA_handle = None, max_guide_score = 0, 
 	
 	return gRNA_class_list, conservation_summary, temp_files_to_append, (MSA_ed, Bowtie_ed), consensus_length
 
-def main_plot(prefix, gRNA_freq):
+def main_plot(prefix, gRNA_freq, guidescore):
 	csv_file = prefix + '_position_score.csv'
 	entropy, conservation = [], []
 	with open(csv_file, 'r') as f:
@@ -188,10 +197,8 @@ def main_plot(prefix, gRNA_freq):
 			entropy.append(float(line[1]))
 			conservation.append(float(line[2]))
 	
-	for i in [0, 10, 50, 100, 250]:
-		ma_entropy = get_moving_average(entropy, i)
-		ma_conservation = get_moving_average(conservation, i)
-		plot_everything(ma_entropy, ma_conservation, prefix + '_' + str(i) + '_movingAvg', gRNA_list = gRNA_freq)
+	for ma in [0, 10, 23, 50, 100, 250]:
+		plot_everything(entropy, conservation, f'{prefix}-{ma}', ma, guidescore)
 	
 def main():
 	args = get_args()
@@ -199,7 +206,8 @@ def main():
 	logging.basicConfig(level=args.loglevel, format=FORMAT)
 	logger.info("cas13gRNAtor starting!!")
 	temp_files_to_remove = []
-	crRNA_handle, gRNA_class_list, temp_files_to_append, max_guide_score = get_gRNAs(args)
+	scorefile = True if args.scorefile else False
+	crRNA_handle, gRNA_class_list, temp_files_to_append, max_guide_score, guidescore_list = get_gRNAs(args, scorefile = scorefile)
 	temp_files_to_remove += temp_files_to_append
 
 	offtarget_summary, temp_files_to_append = bowtie_main(args, crRNA_handle, mode = 'offtarget')
@@ -213,16 +221,14 @@ def main():
 	gRNA_freq = {k:0 for k in range(consensus_length)}
 	if scoring_method[1] and not scoring_method[0]:
 		gRNA_class_list.sort(key=lambda x: x.c_score_bowtie, reverse=True)
+	
 	gRNA_freq = write_all(args, gRNA_class_list, gRNA_freq = gRNA_freq, scoring_method = scoring_method, plot = args.plot)
 	if scoring_method[0]:
 		write_best(args, gRNA_class_list, plot = args.plot)
-		main_plot(args.prefix, gRNA_freq)
+		main_plot(args.prefix, gRNA_freq, guidescore_list)
 
-	if args.temp:
-		for fname in temp_files_to_remove:
-			os.remove(fname)      
-		logger.info("Temporary files removed!")
-		
+	delete_files(temp_files_to_remove, args.temp)
+
 	end_time = time.time()
 	total_time = round(end_time - start_time,3)
 	logger.info(f"cas13gRNAtor has Ended in {total_time} seconds!")

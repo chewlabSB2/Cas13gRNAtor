@@ -45,10 +45,8 @@ def main():
 		logger.debug("Conservation and Entropy Score might not be accurate")
 	_, conservation, entropy = main_calc(aln_array, args.prefix)
 	
-	for i in [0, 10, 50, 100, 250]:
-		ma_entropy = get_moving_average(entropy, i)
-		ma_conservation = get_moving_average(conservation, i)
-		plot_everything(ma_entropy, ma_conservation, args.prefix + '_' + str(i) + '_movingAvg')
+	for ma in [0, 10, 50, 100, 250]:
+		plot_everything(entropy, conservation, f'{prefix}-{ma}', ma)
 	
 	end_time = time.time()
 	total_time = round(end_time - start_time,3)

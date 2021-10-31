@@ -152,7 +152,9 @@ class Wavelet_Tree():
 
 class Cas13gRNA_temp():
 	def __init__(self, reference, query, pos, mismatch):
+		self.name = None
 		self.query = query.upper()
+		self.reference = reference
 		self.pos = pos
 		self.mismatch = mismatch
 		self.cigar = None
@@ -197,7 +199,7 @@ class Cas13gRNA_temp():
 				matrix_a[1, j] = score
 				if get_backtrace:
 					temp = [score == deletion, score == substitution, score == insertion]
-					B[i][j] = bitarray(temp)#''.join(['1' if x else '0' for x in temp])
+					B[i][j] = bitarray(temp) #''.join(['1' if x else '0' for x in temp])
 			matrix_a[0, :] = matrix_a[1, :]
 
 		self.editDistance = matrix_a[-1, -1]
