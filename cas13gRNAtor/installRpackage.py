@@ -13,8 +13,8 @@ def main():
 	    "misc/RNAhyb.sh",
 	]
 
-	for s in software:
-		os.system(f"chmod +x {PYTHON_FILE}/{s}")
+	#for s in software:
+	#	os.system(f"chmod +x {PYTHON_FILE}/{s}")
 
 	check_Rscripts()
 	check_Rscripts_tools()
