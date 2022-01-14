@@ -56,7 +56,7 @@ def get_args():
 						help='Print lots of debugging statements',
 						action="store_const",dest="loglevel",const=logging.DEBUG,
 						default=logging.INFO)
-	parser.add_argument('--conservation-index', dest="conservation_index", default=None, 
+	parser.add_argument('--conservation-index', dest="bowtie_index", default=None, 
 						help='Input an index for conservation calculation if you have!')
 	parser.add_argument('--offtarget-index', dest="offtarget_index", default=None, 
 						help='Input an index for offtargets if you have!')
@@ -65,8 +65,8 @@ def get_args():
 
 	args = parser.parse_args()
 	if not args.MSA:
-		assert args.bowtie or args.conservation_index, ASSERT_MESSAGE_ALIGNMENT
-	elif not args.bowtie or not args.conservation_index:
+		assert args.bowtie or args.bowtie_index, ASSERT_MESSAGE_ALIGNMENT
+	elif not args.bowtie or not args.bowtie_index:
 		assert args.MSA, ASSERT_MESSAGE_ALIGNMENT
 	
 	return args
@@ -268,6 +268,19 @@ def multi_gRNA_score(args, gRNA_class_list, reference = None):
 	write_gRNAs(args, edit_gRNAs)
 	return edit_gRNAs
 
+def open_entropy_conservation_scores(prefix):
+	csv_file = prefix + '_position_score.csv'
+	entropy, conservation = [], []
+	with open(csv_file, 'r') as f:
+		next(f) ## skip header
+		for line in f:
+			line = line.strip('\n')
+			line = line.split('\t')
+			entropy.append(float(line[1]))
+			conservation.append(float(line[2]))
+
+	return entropy, conservation
+
 def main():
 	args = get_args()
 	start_time = time.time()
@@ -291,16 +304,23 @@ def main():
 	gRNA_class_list, conservation_summary, temp_files_to_append, scoring_method, consensus_length = get_scores(args, gRNA_class_list, crRNA_handle = crRNA_handle, get_weighted_score = False)
 	temp_files_to_remove += temp_files_to_append
 	
+	for g in gRNA_class_list:
+		g.pos = g.pos_consensus[0]
+	
 	write_supplementary_data(args, gRNA_class_list)
 	gRNA_freq = {k:0 for k in range(consensus_length)}
-	gRNA_freq = write_all(args, gRNA_class_list, gRNA_freq = gRNA_freq, scoring_method = scoring_method, plot = args.plot, weighted = False)
+	gRNA_freq = write_all(args, gRNA_class_list, gRNA_freq = gRNA_freq, scoring_method = scoring_method, plot = False, weighted = False)
 	if scoring_method[0]:
-		main_plot(args.prefix, gRNA_freq)
+		#main_plot(args.prefix, gRNA_freq)
+		entropy, conservation = open_entropy_conservation_scores(args.prefix)
+		for ma in [0, 10, 50, 100, 250]:
+			plot_everything(entropy, conservation, f'{args.prefix}-{ma}', ma)
+		
 		if args.plot:
 			logger.info("Plotting individual gRNAs!")
 			if not os.path.isdir(args.prefix + '_best_gRNAs'): os.mkdir(args.prefix + '_best_gRNAs') 
 			for g in tqdm(gRNA_class_list):
-				if g.found: plot_highly_conserved_gRNA(g.id, g.c_score_list, g.e_score_list, g.seq, g.pos, args.prefix)
+				if g.found: plot_highly_conserved_gRNA(g.id, g.c_score_list, g.e_score_list, g.seq, g.pos_consensus, args.prefix)
 
 	if args.temp:
 		for fname in temp_files_to_remove:

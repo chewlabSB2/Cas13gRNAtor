@@ -113,8 +113,8 @@ class PostCas13gRNA():
 		self.Intolerant       = str2bool(Intolerant)
 		self.mismatch         = int(Mismatch)
 
-		self.c_mean     	  = float(c_mean)
-		self.e_sum     	      = float(e_sum)
+		self.c_mean           = float(c_mean)
+		self.e_sum            = float(e_sum)
 		self.c_mean_sensitive = float(c_mean_sensitive)
 		self.e_sum_sensitive  = float(e_sum_sensitive)
 		self.c_SD 			  = float(c_SD)

@@ -42,7 +42,7 @@ def get_args():
 						help='Number of mismatches allowed for Bowtie (Default: %(default)s)')
 	parser.add_argument('--guide-score', dest = 'scorefile', metavar="csv", 
 						help="Guide Score From RfxCas13d_GuideScoring.R")
-	parser.add_argument('--conservation-index', dest="conservation_index", default=None, 
+	parser.add_argument('--conservation-index', dest="bowtie_index", default=None, 
 						help='Input an index for conservation calculation if you have!')
 	parser.add_argument('--offtarget-index', dest="offtarget_index", default=None, 
 						help='Input an index for offtargets if you have!')	
@@ -60,11 +60,11 @@ def get_args():
 		assert args.reference, ASSERT_MESSAGE_SCORE
 
 	if not args.MSA:
-		assert args.bowtie or args.conservation_index, ASSERT_MESSAGE_ALIGNMENT
-	elif not args.bowtie or not args.conservation_index:
+		assert args.bowtie or args.bowtie_index, ASSERT_MESSAGE_ALIGNMENT
+	elif not args.bowtie or not args.bowtie_index:
 		assert args.MSA, ASSERT_MESSAGE_ALIGNMENT
 
-	if args.offtarget_index or args.conservation_index:
+	if args.offtarget_index or args.bowtie_index:
 		args.temp = False
 			
 	return args
@@ -122,7 +122,7 @@ def bowtie_main(args, crRNA_fasta, fasta_dict = {}, mode = 'offtarget'):
 		_prefix = args.prefix + '_conservation'
 		bowtie_reference = args.bowtie
 		samfile = args.prefix + '_conservation.sam'
-		bowtie_index_prefix = args.conservation_index if args.conservation_index else None
+		bowtie_index_prefix = args.bowtie_index if args.bowtie_index else None
 
 	if not bowtie_index_prefix:
 		logger.info(f"Building Bowtie Index for {mode}! This might take a while")
@@ -181,7 +181,7 @@ def get_scores(args, gRNA_class_list, crRNA_handle = None, max_guide_score = 0, 
 			logger.debug("Genome sequences is aligned, Bowtie might be inaccurate!")
 		fasta_dict = {k.id:0 for k in gRNA_class_list}
 		conservation_summary, temp_files_to_append = bowtie_main(args, crRNA_handle, fasta_dict = fasta_dict, mode = 'conservation')
-		gRNA_class_list = update_class(gRNA_class_list, conservation_summary = conservation_summary)
+		gRNA_class_list = update_class(gRNA_class_list, conservation_summary = conservation_summary, offtarget_summary = {})
 		Bowtie_ed = True
 	
 	return gRNA_class_list, conservation_summary, temp_files_to_append, (MSA_ed, Bowtie_ed), consensus_length

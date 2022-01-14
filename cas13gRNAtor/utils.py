@@ -161,7 +161,7 @@ class Cas13gRNA():
 
 		self.checked = True
 		if get_weighted_score:
-			self.weighted_score = (0.5*(self.g_score/cap_guidescore) + 0.35*self.c_mean_sensitive  + 0.15*self.c_mean)
+			self.weighted_score = (0.4*(self.g_score/cap_guidescore) + 0.4*self.c_mean_sensitive  + 0.2*self.c_mean)
 			self.weighted_score = round(self.weighted_score, 5)
 	
 
@@ -318,7 +318,7 @@ def check_bowtie(args):
 		if not is_tool(PYTHON_FILE + '/misc/bowtie') or not is_tool(PYTHON_FILE + '/misc/bowtie-build'): 
 			raise AlignmentError("Bowtie is not installed")
 
-	if args.bowtie or args.bowtie_index or args.gRNA_mode[0].lower() == 'low': #Edit
+	if args.bowtie or args.bowtie_index or args.offtarget_index or args.offtarget: #Edit
 		if not is_tool('bowtie') or not is_tool('bowtie-build'):
 			if not is_tool(PYTHON_FILE + '/misc/bowtie') or not is_tool(PYTHON_FILE + '/misc/bowtie-build'): 
 				raise AlignmentError("Bowtie is not installed")

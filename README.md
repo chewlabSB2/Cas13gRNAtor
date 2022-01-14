@@ -50,6 +50,12 @@ cas13gRNAvalidate -i investigatedEV71.txt -m MSAEV71.fasta -bc NonMSAEV71.fasta 
 
 cas13gRNAvalidate evaluates the conservation and entropy scores of the gRNAs previously designed for further inspection at a later time as more viral genomes (such as SARS-CoV-2) are being sequenced. cas13gRNAvalidate will print the conservation and entropy score for each gRNA. The script can find offtargets as well with the -bo flag. 
 
+### Cas13gRNApanvirus Simple Usage
+
+```bash
+
+```
+
 Expected Output
 ---------------
 1. bestgRNAs.csv: Includes the top (default: 100) candidate gRNAs based on the weighted scoring schemer
